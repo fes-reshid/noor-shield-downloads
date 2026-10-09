@@ -1,0 +1,60 @@
+name: Publish installer as a GitHub Release
+
+# Turns a branch named installer-v<version> (holding only the installer .exe
+# and its .sha256.txt) into the GitHub Release v<version>, which is what
+# noorshield.com's download buttons link to. Run it from the Actions tab.
+#
+# This repo exists only to serve those downloads publicly: the website and
+# app source stay in private repos, and a private repo's release files can't
+# be downloaded by visitors. Keeping each installer on its own branch, not in
+# main, keeps main tiny and its history free of 75 MB files.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 0.19.4 (needs branch installer-v<version>)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check the version looks right
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must look like 0.19.4, got '$VERSION'."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: installer-v${{ inputs.version }}
+
+      - name: Verify the checksum
+        run: |
+          set -euo pipefail
+          exe="Noor-Shield-Setup-$VERSION.exe"
+          test -f "$exe" && test -f "$exe.sha256.txt"
+          expected=$(awk '{print tolower($1)}' "$exe.sha256.txt")
+          actual=$(sha256sum "$exe" | awk '{print $1}')
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::Checksum mismatch: file is $actual, .sha256.txt says $expected."
+            exit 1
+          fi
+          echo "Checksum OK: $actual"
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" \
+            "Noor-Shield-Setup-$VERSION.exe" "Noor-Shield-Setup-$VERSION.exe.sha256.txt" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$(git rev-parse HEAD)" \
+            --title "Noor Shield $VERSION" \
+            --notes "Windows installer for Noor Shield $VERSION (Windows 10 and 11). The .sha256.txt file alongside it lets you check the download wasn't corrupted or altered."
