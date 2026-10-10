@@ -1,8 +1,10 @@
 name: Publish installer as a GitHub Release
 
-# Turns a branch named installer-v<version> (holding only the installer .exe
-# and its .sha256.txt) into the GitHub Release v<version>, which is what
-# noorshield.com's download buttons link to. Run it from the Actions tab.
+# Turns a branch named installer-v<version> (holding only the installer .exe,
+# its .sha256.txt and, from 0.21.0 on, latest.yml + .blockmap) into the
+# GitHub Release v<version>, which is what noorshield.com's download buttons
+# link to and what the app's automatic updater checks. Run it from the
+# Actions tab.
 #
 # This repo exists only to serve those downloads publicly: the website and
 # app source stay in private repos, and a private repo's release files can't
@@ -47,13 +49,24 @@ jobs:
             exit 1
           fi
           echo "Checksum OK: $actual"
+          # Automatic updates (0.21.0+): latest.yml must point at this exact
+          # installer, with its SHA-512 — the app refuses an update otherwise.
+          if [ -f latest.yml ]; then
+            grep -q "path: $exe" latest.yml || { echo "::error::latest.yml doesn't name $exe"; exit 1; }
+            sha512=$(openssl dgst -sha512 -binary "$exe" | base64 -w0)
+            grep -q "sha512: $sha512" latest.yml || { echo "::error::latest.yml's sha512 doesn't match $exe"; exit 1; }
+            echo "latest.yml OK (automatic updates)"
+          fi
 
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          files=("Noor-Shield-Setup-$VERSION.exe" "Noor-Shield-Setup-$VERSION.exe.sha256.txt")
+          [ -f latest.yml ] && files+=("latest.yml")
+          [ -f "Noor-Shield-Setup-$VERSION.exe.blockmap" ] && files+=("Noor-Shield-Setup-$VERSION.exe.blockmap")
           gh release create "v$VERSION" \
-            "Noor-Shield-Setup-$VERSION.exe" "Noor-Shield-Setup-$VERSION.exe.sha256.txt" \
+            "${files[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$(git rev-parse HEAD)" \
             --title "Noor Shield $VERSION" \
