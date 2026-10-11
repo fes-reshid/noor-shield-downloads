@@ -1,7 +1,8 @@
 name: Publish installer as a GitHub Release
 
 # Turns a branch named installer-v<version> (holding only the installer .exe,
-# its .sha256.txt and, from 0.21.0 on, latest.yml + .blockmap) into the
+# or its pieces when it's over 100 MB, its .sha256.txt and, from 0.21.0 on,
+# latest.yml + .blockmap) into the
 # GitHub Release v<version>, which is what noorshield.com's download buttons
 # link to and what the app's automatic updater checks. Run it from the
 # Actions tab.
@@ -36,6 +37,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: installer-v${{ inputs.version }}
+
+      # GitHub refuses files over 100 MB in a repository, so a larger
+      # installer arrives in pieces (Noor-Shield-Setup-<version>.exe.part00,
+      # .part01, ...). Join them; the checksum below proves the result is
+      # exactly the file that was built.
+      - name: Join the installer pieces
+        run: |
+          set -euo pipefail
+          exe="Noor-Shield-Setup-$VERSION.exe"
+          if [ ! -f "$exe" ] && compgen -G "$exe.part*" > /dev/null; then
+            cat $(ls "$exe".part* | sort) > "$exe"
+            echo "Joined $(ls "$exe".part* | wc -l) pieces into $exe ($(stat -c %s "$exe") bytes)"
+          fi
 
       - name: Verify the checksum
         run: |
