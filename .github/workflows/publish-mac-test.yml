@@ -1,0 +1,70 @@
+name: Publish Mac test version
+
+# Turns a branch named mac-installer-v<version> (holding only the Mac .pkg,
+# or its pieces when it's over 100 MB, and its .sha256.txt) into the GitHub
+# pre-release mac-v<version>, which noorshield.com's Mac download button
+# links to. A pre-release, so it never becomes this repo's "latest" release:
+# the Windows download links name their own version, and the Windows app's
+# automatic updates skip pre-releases. Run it from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 0.21.0 (needs branch mac-installer-v<version>)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check the version looks right
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must look like 0.21.0, got '$VERSION'."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: mac-installer-v${{ inputs.version }}
+
+      # GitHub refuses files over 100 MB in a repository, so a larger
+      # installer arrives in pieces (Noor-Shield-<version>-Mac.pkg.partaa, ...).
+      - name: Join the installer pieces
+        run: |
+          set -euo pipefail
+          pkg="Noor-Shield-$VERSION-Mac.pkg"
+          if [ ! -f "$pkg" ] && compgen -G "$pkg.part*" > /dev/null; then
+            cat $(ls "$pkg".part* | sort) > "$pkg"
+            echo "Joined $(ls "$pkg".part* | wc -l) pieces into $pkg ($(stat -c %s "$pkg") bytes)"
+          fi
+
+      - name: Verify the checksum
+        run: |
+          set -euo pipefail
+          pkg="Noor-Shield-$VERSION-Mac.pkg"
+          test -f "$pkg" && test -f "$pkg.sha256.txt"
+          expected=$(awk '{print tolower($1)}' "$pkg.sha256.txt")
+          actual=$(sha256sum "$pkg" | awk '{print $1}')
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::Checksum mismatch: file is $actual, .sha256.txt says $expected."
+            exit 1
+          fi
+          echo "Checksum OK: $actual"
+
+      - name: Create the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pkg="Noor-Shield-$VERSION-Mac.pkg"
+          gh release create "mac-v$VERSION" "$pkg" "$pkg.sha256.txt" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$(git rev-parse HEAD)" \
+            --prerelease \
+            --title "Noor Shield for Mac $VERSION (test version)" \
+            --notes "Test version of Noor Shield for Mac (macOS 12 or newer, Intel and Apple chips). It isn't signed by Apple yet, so macOS asks you to confirm it once: see https://noorshield.com/guide.html#mac. It doesn't update itself yet; new versions will be on noorshield.com. The .sha256.txt file alongside it lets you check the download wasn't corrupted or altered."
