@@ -1,0 +1,63 @@
+name: Publish Android app as a GitHub Release
+
+# Turns a branch named android-installer-v<version> (holding the signed
+# Noor-Shield-<version>-Android.apk and its .sha256.txt) into the GitHub
+# Release android-v<version>, which is what noorshield.com's Android download
+# button links to. Run it from the Actions tab.
+#
+# This repo exists only to serve those downloads publicly: the app source
+# stays in a private repo, and a private repo's release files can't be
+# downloaded by visitors. Keeping each build on its own branch, not in main,
+# keeps main tiny and its history free of large binaries.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 0.22.1 (needs branch android-installer-v<version>)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check the version looks right
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must look like 0.22.1, got '$VERSION'."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: android-installer-v${{ inputs.version }}
+
+      - name: Verify the checksum
+        run: |
+          set -euo pipefail
+          apk="Noor-Shield-$VERSION-Android.apk"
+          test -f "$apk" && test -f "$apk.sha256.txt"
+          expected=$(awk '{print tolower($1)}' "$apk.sha256.txt")
+          actual=$(sha256sum "$apk" | awk '{print $1}')
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::Checksum mismatch: file is $actual, .sha256.txt says $expected."
+            exit 1
+          fi
+          echo "Checksum OK: $actual"
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk="Noor-Shield-$VERSION-Android.apk"
+          gh release create "android-v$VERSION" \
+            "$apk" "$apk.sha256.txt" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$(git rev-parse HEAD)" \
+            --prerelease \
+            --title "Noor Shield for Android $VERSION" \
+            --notes "Android app for Noor Shield $VERSION (Android 8 or newer). Installed by downloading the .apk directly (sideloading), not from Google Play yet, so Android asks you to allow it once. The .sha256.txt file alongside it lets you check the download wasn't corrupted or altered."
